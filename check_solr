@@ -48,6 +48,7 @@ my $handlerName = 'standard';
 my $warning;
 my $critical;
 
+my $epoch = time(); # for graphite
 ## process command line arguments
 
 if ($opts{'h'}) {
@@ -57,7 +58,7 @@ if ($opts{'h'}) {
 
 # secure flag
 if ($opts{'s'}) {
-	$protocol = 'https';
+    $protocol = 'https';
 }
 
 # Hostname
@@ -82,28 +83,28 @@ if ($opts{'p'}) {
 
 # metric option
 if ($opts{'o'}) {
-	if ( $opts{'o'} eq 'ping' ) {
-		# path and metric already defaulted to ping
-	} 
-	elsif ( $opts{'o'} eq 'cache' || $opts{'o'} eq 'response' || $opts{'o'} eq 'numdocs' || $opts{'o'} eq 'updates' ) {
-		$metric = $opts{'o'};
-		$path = '/solr/admin/stats.jsp';
-	} 
-	else {
+    if ( $opts{'o'} eq 'ping' ) {
+        # path and metric already defaulted to ping
+    } 
+    elsif ( $opts{'o'} eq 'cache' || $opts{'o'} eq 'response' || $opts{'o'} eq 'numdocs' || $opts{'o'} eq 'updates' ) {
+        $metric = $opts{'o'};
+        $path = '/solr/admin/stats.jsp';
+    } 
+    else {
         print "Unsupported option $opts{'o'}\n";
         usage();
         exit 3;
-    }	
+    }   
 }
 
 # specified query handler name
 if ( $opts{'n'} ) {
-	$handlerName = $opts{'n'};
+    $handlerName = $opts{'n'};
 }
 
 # specified path portion of the URL
 if ( $opts{'u'} ) {
-	$path = $opts{'u'};
+    $path = $opts{'u'};
 }
 
 my $url = "${protocol}://${hostname}:${port}${path}";
@@ -111,10 +112,10 @@ my $url = "${protocol}://${hostname}:${port}${path}";
 
 # thresholds
 if ( $opts{'w'} ) {
-	$warning = $opts{'w'};
+    $warning = $opts{'w'};
 }
 if ( $opts{'c'} ) {
-	$critical = $opts{'c'};
+    $critical = $opts{'c'};
 }
 
 
@@ -125,135 +126,141 @@ my $res = $ua->request($req);
 
 # if we have a HTTP 200 OK response
 if ( $res->is_success ) {
-	# get content as XML
-	my $xp = XML::XPath->new( xml => $res->content );
+    # get content as XML
+    my $xp = XML::XPath->new( xml => $res->content );
 
-	if ( $metric eq 'ping' ) {
-		$retStr = "Solr ping status";
+    if ( $metric eq 'ping' ) {
+        $retStr = "Solr ping status";
   
-		if ( $xp->exists("/response[str='OK']/str[\@name='status']") ) {
-			# We've got <str name="status">OK</str>
-			$exitCode = 0;
-		}
-		else {
-			$exitCode = 2;
-		}
-	}
-	else {
-		# these are from stats.jsp
-		my $core = $xp->getNodeText('/solr/core')->string_value();
-		my $schema = $xp->getNodeText('/solr/schema')->string_value();
+        if ( $xp->exists("/response[str='OK']/str[\@name='status']") ) {
+            # We've got <str name="status">OK</str>
+            $exitCode = 0;
+        }
+        else {
+            $exitCode = 2;
+        }
+    }
+    else {
+        # these are from stats.jsp
+        my $core = $xp->getNodeText('/solr/core')->string_value();
+        my $schema = $xp->getNodeText('/solr/schema')->string_value();
 
-		$retStr = "Solr Core: $core - schema: $schema";
+        $retStr = "Solr Core: $core - schema: $schema";
 
-		if ( $metric eq 'numdocs' ) {
-			# process the CORE searcher entry
-			if ( $xp->exists("/solr/solr-info/CORE/entry[normalize-space(name)='searcher']") ) {
-				my $numDocs = $xp->getNodeText("/solr/solr-info/CORE/entry[normalize-space(name)='searcher']/stats/stat[\@name='numDocs']")->string_value();;
+        if ( $metric eq 'numdocs' ) {
+            # process the CORE searcher entry
+            if ( $xp->exists("/solr/solr-info/CORE/entry[normalize-space(name)='searcher']") ) {
+                my $numDocs = $xp->getNodeText("/solr/solr-info/CORE/entry[normalize-space(name)='searcher']/stats/stat[\@name='numDocs']")->string_value();;
 
-				# Clean up the strings
-				$numDocs = trim($numDocs);
-	
-				$exitCode = 0;
-	  
-				# append to output
-				$retStr = $retStr . " - numDocs=${numDocs}";
-				$perfData = $perfData . "numDocs=${numDocs};;;; ";
-			}
-			else {
-				# exit code stays as UNKNOWN
-				$retStr = $retStr . " - Core 'searcher' not found!"
-			}
-		}
-		elsif ( $metric eq 'cache' ) {
-			my $n = 1;
-
-			# loop through the CACHE entries
-			while ( $xp->exists("/solr/solr-info/CACHE/entry[$n]") ) {
-				my $name = $xp->getNodeText("/solr/solr-info/CACHE/entry[$n]/name")->string_value();
-
-				# Don't bother if it doesn't have a hit ratio (e.g. fieldCache which is managed by Lucene)
-				if ( $xp->exists("/solr/solr-info/CACHE/entry[$n]/stats/stat[\@name='hitratio']") ) {
-					my $hitratio = $xp->getNodeText("/solr/solr-info/CACHE/entry[$n]/stats/stat[\@name='hitratio']")->string_value();
-      
-      				# Clean up the strings
-      				$name = trim($name);
-      				$hitratio = trim($hitratio);
-
-      				# append to performance data
-      				$perfData = $perfData . "'$name hit ratio'=$hitratio\%;;;; ";
-    			}
+                # Clean up the strings
+                $numDocs = trim($numDocs);
     
-    			$n++;
-  			}
-
-  			$exitCode = 0;
-		}
-		elsif ( $metric eq 'response' ) {
-			# process the specific named QUERYHANDLER stats
-			if ( $xp->exists("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']") ) {
-				my $avgResponseTime = $xp->getNodeText("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']/stats/stat[\@name='avgTimePerRequest']")->string_value();;
-				my $requests = $xp->getNodeText("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']/stats/stat[\@name='requests']")->string_value();;
-				my $qps = $xp->getNodeText("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']/stats/stat[\@name='avgRequestsPerSecond']")->string_value();;
-
-				# Clean up the string
-    			$requests = trim($requests);
-
-    			if ($requests == 0) {      
-      				$retStr = $retStr . " - Query handler ${handlerName} has had no requests.";
-      				$exitCode = 3;
-    			} else {
-      				$avgResponseTime = trim($avgResponseTime);
-      				$qps = trim($qps);
+                $exitCode = 0;
       
-      				# threshold checks
-      				if ( $critical && $avgResponseTime >= $critical ) {
-      					$exitCode = 2;
-      				}
-      				elsif ( $warning && $avgResponseTime >= $warning ) {
-      					$exitCode = 1;
-      				} 
-      				else {
-      					$exitCode = 0;
-      				}
-      
-					# append to output
-					$retStr = $retStr . " - ${handlerName} avgResponseTime=${avgResponseTime}";
-	  				$perfData = $perfData . "'${handlerName} avgResponseTime'=${avgResponseTime}ms;;;; '${handlerName} requests'=${requests}c;;;; '${handlerName} qps'=${qps};;;; ";
-    			}
-  			}
-  			else {
-    			# exit code stays as UNKNOWN
-    			$retStr = $retStr . " - Query handler ${handlerName} not found!"
-  			}
-		}
-		elsif ( $metric eq 'updates' ) {
-			# get the UPDATEHANDLER stats
-			if ( $xp->exists("/solr/solr-info/UPDATEHANDLER/entry[normalize-space(name)='updateHandler']") ) {
-				# Stats to gather
-				my @updateStats = ('cumulative_adds', 'commits', 'optimizes', 'docsPending', 'deletesById', 'deletesByQuery');
+                # append to output
+                $retStr = $retStr . " - numDocs=${numDocs}";
+                $perfData = $perfData . "numDocs=${numDocs};;;; ";
+                print "solr.numDocs " . $numDocs . " $epoch\n";
+            }
+            else {
+                # exit code stays as UNKNOWN
+                $retStr = $retStr . " - Core 'searcher' not found!"
+            }
+        }
+        elsif ( $metric eq 'cache' ) {
+            my $n = 1;
 
-				foreach my $stat ( @updateStats ) {
-					my $value = $xp->getNodeText("/solr/solr-info/UPDATEHANDLER/entry[normalize-space(name)='updateHandler']/stats/stat[\@name='$stat']")->string_value();
-					$value = trim($value);
-					
-					# append to output
-					$retStr = $retStr . "; ${stat}=${value}";
-					$perfData = $perfData . "${stat}=${value};;;; ";
-				}
+            # loop through the CACHE entries
+            while ( $xp->exists("/solr/solr-info/CACHE/entry[$n]") ) {
+                my $name = $xp->getNodeText("/solr/solr-info/CACHE/entry[$n]/name")->string_value();
+
+                # Don't bother if it doesn't have a hit ratio (e.g. fieldCache which is managed by Lucene)
+                if ( $xp->exists("/solr/solr-info/CACHE/entry[$n]/stats/stat[\@name='hitratio']") ) {
+                    my $hitratio = $xp->getNodeText("/solr/solr-info/CACHE/entry[$n]/stats/stat[\@name='hitratio']")->string_value();
       
-      			$exitCode = 0;
-  			}
-  			else {
-    			# exit code stays as UNKNOWN
-    			$retStr = $retStr . " - Query handler ${handlerName} not found!"
-  			}
-		}
-	}
+                    # Clean up the strings
+                    $name = trim($name);
+                    $hitratio = trim($hitratio);
+
+                    # append to performance data
+                    $perfData = $perfData . "'$name hit ratio'=$hitratio\%;;;; ";
+                    print "solr.cache.$name.hitRatio " . $hitratio . " $epoch\n"
+                }
+    
+                $n++;
+            }
+
+            $exitCode = 0;
+        }
+        elsif ( $metric eq 'response' ) {
+            # process the specific named QUERYHANDLER stats
+            if ( $xp->exists("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']") ) {
+                my $avgResponseTime = $xp->getNodeText("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']/stats/stat[\@name='avgTimePerRequest']")->string_value();;
+                my $requests = $xp->getNodeText("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']/stats/stat[\@name='requests']")->string_value();;
+                my $qps = $xp->getNodeText("/solr/solr-info/QUERYHANDLER/entry[normalize-space(name)='$handlerName']/stats/stat[\@name='avgRequestsPerSecond']")->string_value();;
+
+                # Clean up the string
+                $requests = trim($requests);
+
+                if ($requests == 0) {      
+                    $retStr = $retStr . " - Query handler ${handlerName} has had no requests.";
+                    $exitCode = 3;
+                } else {
+                    $avgResponseTime = trim($avgResponseTime);
+                    $qps = trim($qps);
+      
+                    # threshold checks
+                    if ( $critical && $avgResponseTime >= $critical ) {
+                        $exitCode = 2;
+                    }
+                    elsif ( $warning && $avgResponseTime >= $warning ) {
+                        $exitCode = 1;
+                    } 
+                    else {
+                        $exitCode = 0;
+                    }
+      
+                    # append to output
+                    $retStr = $retStr . " - ${handlerName} avgResponseTime=${avgResponseTime}";
+                    $perfData = $perfData . "'${handlerName} avgResponseTime'=${avgResponseTime}ms;;;; '${handlerName} requests'=${requests}c;;;; '${handlerName} qps'=${qps};;;; ";
+                    print "solr.handler.$handlerName.avgResponseTimeMs " . $avgResponseTime . " $epoch\n";
+                    print "solr.handler.$handlerName.requests " . $requests . " $epoch\n";
+                    print "solr.handler.$handlerName.queriesPerSecond " . $qps . " $epoch\n";
+                }
+            }
+            else {
+                # exit code stays as UNKNOWN
+                $retStr = $retStr . " - Query handler ${handlerName} not found!"
+            }
+        }
+        elsif ( $metric eq 'updates' ) {
+            # get the UPDATEHANDLER stats
+            if ( $xp->exists("/solr/solr-info/UPDATEHANDLER/entry[normalize-space(name)='updateHandler']") ) {
+                # Stats to gather
+                my @updateStats = ('cumulative_adds', 'commits', 'optimizes', 'docsPending', 'deletesById', 'deletesByQuery');
+
+                foreach my $stat ( @updateStats ) {
+                    my $value = $xp->getNodeText("/solr/solr-info/UPDATEHANDLER/entry[normalize-space(name)='updateHandler']/stats/stat[\@name='$stat']")->string_value();
+                    $value = trim($value);
+                    
+                    # append to output
+                    $retStr = $retStr . "; ${stat}=${value}";
+                    $perfData = $perfData . "${stat}=${value};;;; ";
+                    print "solr.updates.$stat " . $value . " $epoch\n";
+                }
+      
+                $exitCode = 0;
+            }
+            else {
+                # exit code stays as UNKNOWN
+                $retStr = $retStr . " - Query handler ${handlerName} not found!"
+            }
+        }
+    }
 }
 else {
-	$retStr = $res->status_line;
-	$exitCode = 2;
+    $retStr = $res->status_line;
+    $exitCode = 2;
 }
 
 # and exit
@@ -291,7 +298,7 @@ EOF
 
 # trim leading & trailing spaces
 sub trim {
-	my ($arg) = @_;
-	$arg =~ s/^\s+|\s+$//g;
-	return $arg;
+    my ($arg) = @_;
+    $arg =~ s/^\s+|\s+$//g;
+    return $arg;
 }
