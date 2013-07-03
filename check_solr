@@ -264,8 +264,9 @@ else {
 }
 
 # and exit
-print $alertStrs[$exitCode] . " - $retStr | $perfData\n";
-exit $exitCode;
+# I've got no need for Nagios integration
+#print $alertStrs[$exitCode] . " - $retStr | $perfData\n";
+#exit $exitCode;
 
 
 # Display the usage message
