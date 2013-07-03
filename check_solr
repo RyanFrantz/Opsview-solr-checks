@@ -237,7 +237,7 @@ if ( $res->is_success ) {
             # get the UPDATEHANDLER stats
             if ( $xp->exists("/solr/solr-info/UPDATEHANDLER/entry[normalize-space(name)='updateHandler']") ) {
                 # Stats to gather
-                my @updateStats = ('cumulative_adds', 'commits', 'optimizes', 'docsPending', 'deletesById', 'deletesByQuery');
+                my @updateStats = ('adds', 'errors', 'rollbacks', 'cumulative_adds', 'commits', 'optimizes', 'docsPending', 'deletesById', 'deletesByQuery');
 
                 foreach my $stat ( @updateStats ) {
                     my $value = $xp->getNodeText("/solr/solr-info/UPDATEHANDLER/entry[normalize-space(name)='updateHandler']/stats/stat[\@name='$stat']")->string_value();
